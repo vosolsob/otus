@@ -1,26 +1,26 @@
 """
 Raspberry Camera Controller pro Raspberry Pi 4B, Camera V1.0 a A4988 ovladače.
-Podporuje výběr více ROI, sekvenční snímání a živý náhled kamery v GUI.
-V této verzi je aktivní pouze režim výběru ROI a živý náhled.
+Verze s podporou Picamera2 pro live preview v režimu výběru ROI.
 """
 
 import tkinter as tk
 from PIL import Image, ImageTk
-from picamera import PiCamera
-from picamera.array import PiRGBArray
 import threading
 import numpy as np
 import time
 
-# Základní Kamera kontroler s podporou streamování
+from picamera2 import Picamera2
+from picamera2.encoders import JpegEncoder
+from picamera2.outputs import FileOutput
+
 class CameraController:
     def __init__(self, preview_size=(320, 240)):
-        self.camera = PiCamera()
-        self.camera.resolution = preview_size
-        self.rawCapture = PiRGBArray(self.camera, size=preview_size)
+        self.picam2 = Picamera2()
         self.preview_size = preview_size
-        self.stream_running = False
+        self.picam2.configure(self.picam2.create_preview_configuration(main={"size": self.preview_size, "format": "RGB888"}))
+        self.picam2.start()
         self.frame = None
+        self.stream_running = False
 
     def start_preview(self):
         self.stream_running = True
@@ -30,23 +30,21 @@ class CameraController:
         self.stream_running = False
 
     def _update_stream(self):
-        for frame in self.camera.capture_continuous(self.rawCapture, format="bgr", use_video_port=True):
-            if not self.stream_running:
-                break
-            img = frame.array
-            self.frame = img.copy()
-            self.rawCapture.truncate(0)
-        self.rawCapture.truncate(0)
+        while self.stream_running:
+            try:
+                frame = self.picam2.capture_array()
+                self.frame = frame.copy()
+            except Exception:
+                pass
+            time.sleep(0.03)  # ~30 fps
 
     def get_frame(self):
-        # Vrátí poslední frame (BGR pole)
         return self.frame
 
     def close(self):
         self.stop_preview()
-        self.camera.close()
+        self.picam2.stop()
 
-# Dummy třídy motorů a ROI - zatím neaktivní
 class StepperMotor:
     def __init__(self, axis, pins, limit_min, limit_max):
         self.axis = axis
@@ -72,22 +70,20 @@ class ROIManager:
     def get_rois(self):
         return self.rois
 
-# GUI aplikace s podporou live preview a výběru ROI
 class CameraRigApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Raspberry Pi Camera Controller - ROI režim (preview)")
+        self.title("Raspberry Pi Camera Controller – ROI režim (preview, Picamera2)")
         self.geometry("400x320")
         self.resizable(False, False)
 
-        self.position = [0, 0, 0] # x, y, z
+        self.position = [0, 0, 0]  # x, y, z
         self.roi_manager = ROIManager()
         self.camera = CameraController()
 
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind_all("<Key>", self.on_key_press)
-        # Spusť živý náhled
         self.camera.start_preview()
         self.update_preview()
 
@@ -108,15 +104,13 @@ class CameraRigApp(tk.Tk):
     def update_preview(self):
         frame = self.camera.get_frame()
         if frame is not None:
-            # Převod NumPy pole na Tkinter obrázek
             img = Image.fromarray(frame)
             imgtk = ImageTk.PhotoImage(image=img)
             self.preview_label.imgtk = imgtk
             self.preview_label.config(image=imgtk)
-        self.after(33, self.update_preview)  # cca 30 FPS
+        self.after(33, self.update_preview)
 
     def on_key_press(self, event):
-        # Pro test: šipky posun pozice, b/n = bod ROI, space = potvrzení, jinak ignoruj
         if event.keysym == "Left":
             self.position[0] -= 1
         elif event.keysym == "Right":
@@ -137,7 +131,7 @@ class CameraRigApp(tk.Tk):
         self.update_gui()
 
     def confirm_roi(self):
-        pass  # Do budoucna (zatím "živý" výběr)
+        pass  # do budoucna
 
     def reset_roi(self):
         self.roi_manager.reset()
