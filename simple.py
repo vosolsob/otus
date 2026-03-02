@@ -1,5 +1,6 @@
 import curses
 import time
+from threading import Thread, Event
 from gpiozero import OutputDevice, DigitalInputDevice
 
 # ==== PIN DEFINICE ====
@@ -12,11 +13,17 @@ LIMIT_PIN = 12  # paralelní koncové spínače
 step = OutputDevice(STEP_PIN)
 direction = OutputDevice(DIR_PIN)
 enable = OutputDevice(ENABLE_PIN, active_high=False)  # LOW = enable
-limit_switch = DigitalInputDevice(LIMIT_PIN, pull_up=True)  # sepnutý = LOW
+# aktivní LOW → pull_up=True
+limit_switch = DigitalInputDevice(LIMIT_PIN, pull_up=True)
 
 enable.on()  # aktivace driveru
 
 STEP_DELAY = 0.002  # pevná rychlost
+
+# ==== FLAGY ====
+move_up = Event()
+move_down = Event()
+stop_motor = Event()  # bude nastaven, pokud limit
 
 # ==== FUNKCE PRO KROK ====
 def make_step():
@@ -25,8 +32,36 @@ def make_step():
     step.off()
     time.sleep(STEP_DELAY)
 
-# ==== HLAVNÍ PROGRAM ====
+# ==== VLÁKNO PRO MOTOR ====
+def motor_thread():
+    while True:
+        if stop_motor.is_set():
+            time.sleep(0.001)
+            continue
+
+        if move_up.is_set():
+            direction.on()
+            if not limit_switch.value:  # sepnutý = LOW
+                stop_motor.set()
+                move_up.clear()
+            else:
+                make_step()
+
+        elif move_down.is_set():
+            direction.off()
+            if not limit_switch.value:
+                stop_motor.set()
+                move_down.clear()
+            else:
+                make_step()
+        else:
+            time.sleep(0.001)  # nic se neděje
+
+# ==== HLAVNÍ PROGRAM (curses) ====
 def main(stdscr):
+    t = Thread(target=motor_thread, daemon=True)
+    t.start()
+
     curses.cbreak()
     stdscr.nodelay(True)
     stdscr.clear()
@@ -36,40 +71,32 @@ def main(stdscr):
     try:
         while True:
             key = stdscr.getch()
-            # kontrola ukončení
             if key == ord('q'):
                 break
-
-            # rozhodnutí o směru
-            if key == curses.KEY_UP:
-                direction.on()
-                stdscr.addstr(5, 0, "Jede nahoru   ")
+            elif key == curses.KEY_UP:
+                move_up.set()
+                move_down.clear()
+                stop_motor.clear()
+                stdscr.addstr(5, 0, "Jede nahoru       ")
                 stdscr.refresh()
-                while True:
-                    # pokud je koncový spínač sepnutý, okamžitě stop
-                    if not limit_switch.value:  # LOW = aktivní
-                        stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
-                        stdscr.refresh()
-                        break
-                    make_step()
-                    # pokud už není stisknutá šipka, break
-                    if stdscr.getch() != curses.KEY_UP:
-                        break
-
             elif key == curses.KEY_DOWN:
-                direction.off()
-                stdscr.addstr(5, 0, "Jede dolů   ")
+                move_down.set()
+                move_up.clear()
+                stop_motor.clear()
+                stdscr.addstr(5, 0, "Jede dolů        ")
                 stdscr.refresh()
-                while True:
-                    if not limit_switch.value:  # LOW = aktivní
-                        stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
-                        stdscr.refresh()
-                        break
-                    make_step()
-                    if stdscr.getch() != curses.KEY_DOWN:
-                        break
+            else:
+                # pokud klávesa není držena → zastavení
+                move_up.clear()
+                move_down.clear()
 
-            time.sleep(0.001)  # minimalní pauza pro stabilitu
+            # detekce limitu
+            if not limit_switch.value:  # LOW = sepnutý
+                stop_motor.set()
+                stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
+                stdscr.refresh()
+
+            time.sleep(0.01)
 
     finally:
         enable.off()
