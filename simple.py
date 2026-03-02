@@ -3,9 +3,9 @@ import time
 from gpiozero import OutputDevice, DigitalInputDevice
 
 # ==== PIN DEFINICE ====
-STEP_PIN = 20
-DIR_PIN = 21
-ENABLE_PIN = 16
+STEP_PIN = 26
+DIR_PIN = 19
+ENABLE_PIN = 22
 LIMIT_PIN = 12   # oba koncové spínače paralelně
 
 # ==== INICIALIZACE ====
