@@ -1,65 +1,72 @@
-import picamera2
-import RPi.GPIO as GPIO
-import threading
-import keyboard  # for capturing key presses
+import tkinter as tk
+from picamera2 import Picamera2
+from stepper_motor_controller import StepperMotorController
 
-# Constants
-Z_UP_KEY = 'q'
-Z_DOWN_KEY = 'a'
+# Define keyboard commands
+KEY_COMMANDS = {
+    "left": "Left",
+    "right": "Right",
+    "up": "Up",
+    "down": "Down",
+    "z_plus": "q",
+    "z_minus": "a",
+    "roi_start": "b",
+    "roi_end": "n",
+    "confirm_roi": " ",
+    "reset_roi": "r"
+}
 
-class StepperMotorController:
-    def __init__(self, step_pin, dir_pin, limit_switch_pin):
-        self.step_pin = step_pin
-        self.dir_pin = dir_pin
-        self.limit_switch_pin = limit_switch_pin
-        
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.step_pin, GPIO.OUT)
-        GPIO.setup(self.dir_pin, GPIO.OUT)
-        GPIO.setup(self.limit_switch_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+class CameraApp:
+    def __init__(self, root):
+        self.picamera = Picamera2()
+        self.motor_controller = StepperMotorController()
+        self.roi_points = []
+        self.create_widgets(root)
+        self.setup_keyboard_bindings(root)
 
-    def move_up(self, steps):
-        GPIO.output(self.dir_pin, GPIO.HIGH)  # Set direction up
-        for _ in range(steps):
-            if GPIO.input(self.limit_switch_pin) == GPIO.LOW:
-                break  # Stop if the limit switch is triggered
-            GPIO.output(self.step_pin, GPIO.HIGH)
-            GPIO.output(self.step_pin, GPIO.LOW)
+    def create_widgets(self, root):
+        self.label = tk.Label(root, text="Camera Control with Stepper Motors")
+        self.label.pack()
+        self.start_button = tk.Button(root, text="Start Camera", command=self.start_camera)
+        self.start_button.pack()
 
-    def move_down(self, steps):
-        GPIO.output(self.dir_pin, GPIO.LOW)  # Set direction down
-        for _ in range(steps):
-            if GPIO.input(self.limit_switch_pin) == GPIO.LOW:
-                break  # Stop if the limit switch is triggered
-            GPIO.output(self.step_pin, GPIO.HIGH)
-            GPIO.output(self.step_pin, GPIO.LOW)
+    def setup_keyboard_bindings(self, root):
+        root.bind("<KeyPress>", self.handle_keypress)
 
-class RaspberryCameraController:
-    def __init__(self):
-        self.camera = picamera2.Picamera2()
-        self.camera.configure(self.camera.create_video_configuration(main={"size": (1920, 1080)}))
+    def handle_keypress(self, event):
+        if event.keysym == KEY_COMMANDS["left"]:
+            self.motor_controller.move_x(-1)
+        elif event.keysym == KEY_COMMANDS["right"]:
+            self.motor_controller.move_x(1)
+        elif event.keysym == KEY_COMMANDS["up"]:
+            self.motor_controller.move_y(1)
+        elif event.keysym == KEY_COMMANDS["down"]:
+            self.motor_controller.move_y(-1)
+        elif event.keysym == KEY_COMMANDS["z_plus"]:
+            self.motor_controller.move_z(1)
+        elif event.keysym == KEY_COMMANDS["z_minus"]:
+            self.motor_controller.move_z(-1)
+        elif event.keysym == KEY_COMMANDS["roi_start"]:
+            self.roi_points.append((self.motor_controller.current_x, self.motor_controller.current_y))
+        elif event.keysym == KEY_COMMANDS["roi_end"]:
+            self.roi_points.append((self.motor_controller.current_x, self.motor_controller.current_y))
+        elif event.keysym == KEY_COMMANDS["confirm_roi"]:
+            self.confirm_roi()
+        elif event.keysym == KEY_COMMANDS["reset_roi"]:
+            self.reset_roi()
 
-    def take_picture(self, filename):
-        self.camera.start()
-        self.camera.capture(filename)
-        self.camera.stop()
+    def confirm_roi(self):
+        print(f"ROI Points: {self.roi_points}")
 
-class KeyboardController:
-    def __init__(self, stepper_motor):
-        self.stepper_motor = stepper_motor
+    def reset_roi(self):
+        self.roi_points = []
+        print("ROI reset.")
 
-    def listen(self):
-        while True:
-            if keyboard.is_pressed(Z_UP_KEY):
-                self.stepper_motor.move_up(50)  # Example step count
-            elif keyboard.is_pressed(Z_DOWN_KEY):
-                self.stepper_motor.move_down(50)  # Example step count
+    def start_camera(self):
+        self.picamera.start_preview()
+        print("Camera started.")
 
 if __name__ == "__main__":
-    stepper = StepperMotorController(step_pin=17, dir_pin=27, limit_switch_pin=22)
-    camera_controller = RaspberryCameraController()
-    keyboard_controller = KeyboardController(stepper)
-
-    # Start keyboard listening in a separate thread
-    listener_thread = threading.Thread(target=keyboard_controller.listen)
-    listener_thread.start()
+    root = tk.Tk()
+    app = CameraApp(root)
+    root.mainloop()
