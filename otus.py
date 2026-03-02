@@ -208,8 +208,8 @@ class CameraRigApp(tk.Tk):
         # POZOR: Přizpůsit piny dle skutečného zapojení!
         try:
             self.x_motor = StepperMotorController("X", dir_pin=17, step_pin=27, enable_pin=22, limit_switch_pin=10)
-            self.y_motor = StepperMotorController("Y", dir_pin=5, step_pin=6, enable_pin=13, limit_switch_pin=11)
-            self.z_motor = StepperMotorController("Z", dir_pin=19, step_pin=26, enable_pin=16, limit_switch_pin=12)
+            self.y_motor = StepperMotorController("Y", dir_pin=5, step_pin=6, enable_pin=22, limit_switch_pin=11)
+            self.z_motor = StepperMotorController("Z", dir_pin=19, step_pin=26, enable_pin=22, limit_switch_pin=12)
             self.motors_initialized = True
         except Exception as e:
             print(f"Chyba při inicializaci motorů: {e}")
