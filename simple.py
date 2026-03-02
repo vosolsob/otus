@@ -1,23 +1,24 @@
 import curses
-import pigpio
 import time
+import pigpio
 from threading import Thread, Event
 
 # ==== PIN DEFINICE ====
 STEP_PIN = 26
 DIR_PIN = 19
 ENABLE_PIN = 22
-LIMIT_PIN = 12  # paralelní koncové spínače
+LIMIT_PIN = 12  # paralelní spínače
 
-# ==== PARAMETRY MOTORU ====
-STEP_DELAY = 0.002  # pevná rychlost (s)
+# ==== PARAMETRY ====
+STEP_FREQ = 500  # Hz, frekvence kroků
+STEP_WIDTH = 1   # ms pulsu (délka HIGH)
 
 # ==== FLAGY ====
 move_up = Event()
 move_down = Event()
 stop_motor = Event()
 
-# ==== INICIALIZACE pigpio ====
+# ==== INIT pigpio ====
 pi = pigpio.pi()
 pi.set_mode(STEP_PIN, pigpio.OUTPUT)
 pi.set_mode(DIR_PIN, pigpio.OUTPUT)
@@ -25,7 +26,7 @@ pi.set_mode(ENABLE_PIN, pigpio.OUTPUT)
 pi.set_mode(LIMIT_PIN, pigpio.INPUT)
 pi.write(ENABLE_PIN, 0)  # LOW = enable driver
 
-# externí pull-up → LOW = sepnutý
+# ==== FUNKCE PRO LIMIT SWITCH ====
 def is_limit_triggered():
     # software debounce 5 ms
     if pi.read(LIMIT_PIN) == 0:  # LOW = sepnutý
@@ -34,10 +35,21 @@ def is_limit_triggered():
             return True
     return False
 
-# ==== VLÁKNO MOTORU ====
+# ==== GENERACE WAVY STEP ====
+def create_step_wave(freq_hz):
+    micros = int(500000 / freq_hz)  # polovina periody v µs
+    pulses = []
+    pulses.append(pigpio.pulse(1 << STEP_PIN, 0, micros))
+    pulses.append(pigpio.pulse(0, 1 << STEP_PIN, micros))
+    pi.wave_add_generic(pulses)
+    return pi.wave_create()
+
+# ==== MOTOR THREAD ====
 def motor_loop():
+    wave_id = create_step_wave(STEP_FREQ)
     while True:
         if stop_motor.is_set():
+            pi.wave_tx_stop()
             time.sleep(0.001)
             continue
 
@@ -46,26 +58,23 @@ def motor_loop():
             if is_limit_triggered():
                 stop_motor.set()
                 move_up.clear()
+                pi.wave_tx_stop()
                 continue
-            # STEP pulse
-            pi.write(STEP_PIN, 1)
-            time.sleep(STEP_DELAY)
-            pi.write(STEP_PIN, 0)
-            time.sleep(STEP_DELAY)
+            if not pi.wave_tx_busy():
+                pi.wave_send_repeat(wave_id)
 
         elif move_down.is_set():
             pi.write(DIR_PIN, 0)
             if is_limit_triggered():
                 stop_motor.set()
                 move_down.clear()
+                pi.wave_tx_stop()
                 continue
-            # STEP pulse
-            pi.write(STEP_PIN, 1)
-            time.sleep(STEP_DELAY)
-            pi.write(STEP_PIN, 0)
-            time.sleep(STEP_DELAY)
+            if not pi.wave_tx_busy():
+                pi.wave_send_repeat(wave_id)
 
         else:
+            pi.wave_tx_stop()
             time.sleep(0.001)
 
 # ==== HLAVNÍ PROGRAM (curses) ====
@@ -97,11 +106,10 @@ def main(stdscr):
                 stdscr.addstr(5, 0, "Jede dolů        ")
                 stdscr.refresh()
             else:
-                # žádná klávesa → zastavení
                 move_up.clear()
                 move_down.clear()
 
-            # detekce limitu v hlavním vlákně
+            # detekce limitu
             if is_limit_triggered():
                 stop_motor.set()
                 stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
@@ -110,7 +118,8 @@ def main(stdscr):
             time.sleep(0.001)
 
     finally:
-        pi.write(ENABLE_PIN, 1)  # vypnutí driveru
+        pi.wave_tx_stop()
+        pi.write(ENABLE_PIN, 1)
         pi.stop()
         stdscr.addstr(7, 0, "Program ukončen")
         stdscr.refresh()
