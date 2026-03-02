@@ -1,7 +1,7 @@
 import curses
+import pigpio
 import time
 from threading import Thread, Event
-from gpiozero import OutputDevice, DigitalInputDevice
 
 # ==== PIN DEFINICE ====
 STEP_PIN = 26
@@ -9,22 +9,32 @@ DIR_PIN = 19
 ENABLE_PIN = 22
 LIMIT_PIN = 12  # paralelní koncové spínače
 
-# ==== INICIALIZACE ====
-step = OutputDevice(STEP_PIN)
-direction = OutputDevice(DIR_PIN)
-enable = OutputDevice(ENABLE_PIN, active_high=False)  # LOW = enable
-limit_switch = DigitalInputDevice(LIMIT_PIN, pull_up=True)  # sepnutý = LOW
-
-enable.on()  # aktivace driveru
-
-STEP_DELAY = 0.002  # pevná rychlost
+# ==== PARAMETRY MOTORU ====
+STEP_DELAY = 0.002  # pevná rychlost (s)
 
 # ==== FLAGY ====
 move_up = Event()
 move_down = Event()
 stop_motor = Event()
 
-# ==== VLÁKNO PRO MOTOR ====
+# ==== INICIALIZACE pigpio ====
+pi = pigpio.pi()
+pi.set_mode(STEP_PIN, pigpio.OUTPUT)
+pi.set_mode(DIR_PIN, pigpio.OUTPUT)
+pi.set_mode(ENABLE_PIN, pigpio.OUTPUT)
+pi.set_mode(LIMIT_PIN, pigpio.INPUT)
+pi.write(ENABLE_PIN, 0)  # LOW = enable driver
+
+# externí pull-up → LOW = sepnutý
+def is_limit_triggered():
+    # software debounce 5 ms
+    if pi.read(LIMIT_PIN) == 0:  # LOW = sepnutý
+        time.sleep(0.005)
+        if pi.read(LIMIT_PIN) == 0:
+            return True
+    return False
+
+# ==== VLÁKNO MOTORU ====
 def motor_loop():
     while True:
         if stop_motor.is_set():
@@ -32,25 +42,27 @@ def motor_loop():
             continue
 
         if move_up.is_set():
-            direction.on()
-            if not limit_switch.value:  # LOW = aktivní
+            pi.write(DIR_PIN, 1)
+            if is_limit_triggered():
                 stop_motor.set()
                 move_up.clear()
                 continue
-            step.on()
+            # STEP pulse
+            pi.write(STEP_PIN, 1)
             time.sleep(STEP_DELAY)
-            step.off()
+            pi.write(STEP_PIN, 0)
             time.sleep(STEP_DELAY)
 
         elif move_down.is_set():
-            direction.off()
-            if not limit_switch.value:
+            pi.write(DIR_PIN, 0)
+            if is_limit_triggered():
                 stop_motor.set()
                 move_down.clear()
                 continue
-            step.on()
+            # STEP pulse
+            pi.write(STEP_PIN, 1)
             time.sleep(STEP_DELAY)
-            step.off()
+            pi.write(STEP_PIN, 0)
             time.sleep(STEP_DELAY)
 
         else:
@@ -85,20 +97,21 @@ def main(stdscr):
                 stdscr.addstr(5, 0, "Jede dolů        ")
                 stdscr.refresh()
             else:
-                # pokud není klávesa držena → motor se zastaví
+                # žádná klávesa → zastavení
                 move_up.clear()
                 move_down.clear()
 
-            # detekce limitu mimo vlákno motoru
-            if not limit_switch.value:  # LOW = sepnutý
+            # detekce limitu v hlavním vlákně
+            if is_limit_triggered():
                 stop_motor.set()
                 stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
                 stdscr.refresh()
 
-            time.sleep(0.001)  # minimalní pauza
+            time.sleep(0.001)
 
     finally:
-        enable.off()
+        pi.write(ENABLE_PIN, 1)  # vypnutí driveru
+        pi.stop()
         stdscr.addstr(7, 0, "Program ukončen")
         stdscr.refresh()
         time.sleep(1)
