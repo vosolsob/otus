@@ -1,17 +1,23 @@
-# Updated motor control implementation
+import keyboard
 
-# Function to control A4988 driver
+class MotorControl:
+    def __init__(self):
+        self.position_z = 0
 
-def motor_control(a4988_command):
-    # Implement motor control logic
-    pass
+    def move_up(self):
+        self.position_z += 1
+        print(f'Moved up to position {self.position_z}')
 
-# Updated keyboard controls for Z-axis
+    def move_down(self):
+        self.position_z -= 1
+        print(f'Moved down to position {self.position_z}')
 
-def keyboard_controls(key):
-    if key == 'Q':
-        # Logic for Z+
-        motor_control('Z+')
-    elif key == 'A':
-        # Logic for Z-
-        motor_control('Z-')
+    def listen_for_keys(self):
+        keyboard.add_hotkey('q', self.move_up)
+        keyboard.add_hotkey('a', self.move_down)
+        print('Listening for keyboard input...')
+        keyboard.wait()
+
+if __name__ == '__main__':
+    motor_control = MotorControl()
+    motor_control.listen_for_keys()
