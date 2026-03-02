@@ -13,8 +13,7 @@ LIMIT_PIN = 12  # paralelní koncové spínače
 step = OutputDevice(STEP_PIN)
 direction = OutputDevice(DIR_PIN)
 enable = OutputDevice(ENABLE_PIN, active_high=False)  # LOW = enable
-# aktivní LOW → pull_up=True
-limit_switch = DigitalInputDevice(LIMIT_PIN, pull_up=True)
+limit_switch = DigitalInputDevice(LIMIT_PIN, pull_up=True)  # sepnutý = LOW
 
 enable.on()  # aktivace driveru
 
@@ -23,17 +22,10 @@ STEP_DELAY = 0.002  # pevná rychlost
 # ==== FLAGY ====
 move_up = Event()
 move_down = Event()
-stop_motor = Event()  # bude nastaven, pokud limit
-
-# ==== FUNKCE PRO KROK ====
-def make_step():
-    step.on()
-    time.sleep(STEP_DELAY)
-    step.off()
-    time.sleep(STEP_DELAY)
+stop_motor = Event()
 
 # ==== VLÁKNO PRO MOTOR ====
-def motor_thread():
+def motor_loop():
     while True:
         if stop_motor.is_set():
             time.sleep(0.001)
@@ -41,25 +33,32 @@ def motor_thread():
 
         if move_up.is_set():
             direction.on()
-            if not limit_switch.value:  # sepnutý = LOW
+            if not limit_switch.value:  # LOW = aktivní
                 stop_motor.set()
                 move_up.clear()
-            else:
-                make_step()
+                continue
+            step.on()
+            time.sleep(STEP_DELAY)
+            step.off()
+            time.sleep(STEP_DELAY)
 
         elif move_down.is_set():
             direction.off()
             if not limit_switch.value:
                 stop_motor.set()
                 move_down.clear()
-            else:
-                make_step()
+                continue
+            step.on()
+            time.sleep(STEP_DELAY)
+            step.off()
+            time.sleep(STEP_DELAY)
+
         else:
-            time.sleep(0.001)  # nic se neděje
+            time.sleep(0.001)
 
 # ==== HLAVNÍ PROGRAM (curses) ====
 def main(stdscr):
-    t = Thread(target=motor_thread, daemon=True)
+    t = Thread(target=motor_loop, daemon=True)
     t.start()
 
     curses.cbreak()
@@ -86,17 +85,17 @@ def main(stdscr):
                 stdscr.addstr(5, 0, "Jede dolů        ")
                 stdscr.refresh()
             else:
-                # pokud klávesa není držena → zastavení
+                # pokud není klávesa držena → motor se zastaví
                 move_up.clear()
                 move_down.clear()
 
-            # detekce limitu
+            # detekce limitu mimo vlákno motoru
             if not limit_switch.value:  # LOW = sepnutý
                 stop_motor.set()
                 stdscr.addstr(6, 0, "Koncový spínač aktivní! STOP  ")
                 stdscr.refresh()
 
-            time.sleep(0.01)
+            time.sleep(0.001)  # minimalní pauza
 
     finally:
         enable.off()
